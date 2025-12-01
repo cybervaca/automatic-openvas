@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-o", "--output",
         default="openvas.csv",
-        help="Ruta del CSV de salida (por defecto: targets_export.csv)"
+        help="Ruta del CSV de salida (por defecto: openvas.csv)"
     )
     parser.add_argument(
         "--page-size",
