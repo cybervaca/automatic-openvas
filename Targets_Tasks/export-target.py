@@ -47,11 +47,19 @@ def export_targets_csv(config_path: str, csv_path: str, page_size: int = 1000) -
         writer.writerow(["Titulo", "Rango", "Desc"])
         for target in all_targets:
             titulo = (target.findtext("name") or "").strip()
-            rango = (target.findtext("hosts") or "").strip()
+            rangos_str = (target.findtext("hosts") or "").strip()
             desc = (target.findtext("comment") or "").strip()
             titulo = " ".join(titulo.split())
             desc = " ".join(desc.split())
-            writer.writerow([titulo, rango, desc])
+            
+            # Dividir rangos por comas y crear una fila por cada rango
+            if rangos_str:
+                rangos = [r.strip() for r in rangos_str.split(',') if r.strip()]
+                for rango in rangos:
+                    writer.writerow([titulo, rango, desc])
+            else:
+                # Si no hay rangos, escribir una fila vacía
+                writer.writerow([titulo, "", desc])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
