@@ -6,7 +6,7 @@ Este proyecto automatiza la instalación y configuración de OpenVAS, así como 
 
 ```bash
 # Clonar el repositorio desde GitHub:
-git clone https://github.com/JuanLuHens/automatic-openvas
+git clone https://github.com/cybervaca/automatic-openvas
 
 # Renombrar la carpeta a "gvm":
 mv automatic-openvas gvm

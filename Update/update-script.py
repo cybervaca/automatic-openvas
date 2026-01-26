@@ -82,7 +82,7 @@ def leer_configuracion(fichero):
         print(f"Ocurrió un error: {e}")
         return 0
 
-url_github = "https://raw.githubusercontent.com/JuanLuHens/automatic-openvas/main/Config/config_example.json"
+url_github = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/main/Config/config_example.json"
 version_github = get_version_github(url_github)
 configuracion = leer_configuracion('/home/redteam/gvm/Config/config_example.json')
 version_local = configuracion.get('version')
