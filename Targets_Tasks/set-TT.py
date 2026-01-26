@@ -3,11 +3,40 @@ import getpass
 import xml.etree.ElementTree as ET
 from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
+# Intentar importar HostsOrdering desde diferentes ubicaciones posibles
+try:
+    from gvm.protocols.gmp.types import HostsOrdering
+except ImportError:
+    try:
+        from gvm.protocols.gmp import HostsOrdering
+    except ImportError:
+        # Si no se puede importar, usar None y eliminar el parámetro
+        HostsOrdering = None
 
 
 def load_csv(file):
-    df = pd.read_csv(file, delimiter=';')
-    return df
+    try:
+        df = pd.read_csv(file, delimiter=';')
+        print(f"CSV cargado: {len(df)} filas encontradas")
+        if len(df) == 0:
+            print("ERROR: El archivo CSV está vacío")
+            return None
+        # Eliminar filas completamente vacías
+        df = df.dropna(how='all')
+        # Eliminar filas donde Titulo, Rango o Desc estén vacíos
+        df = df.dropna(subset=['Titulo', 'Rango', 'Desc'])
+        print(f"Después de filtrar vacíos: {len(df)} filas válidas")
+        if len(df) == 0:
+            print("ERROR: No hay filas válidas después de filtrar")
+            return None
+        print(f"Columnas encontradas: {list(df.columns)}")
+        return df
+    except FileNotFoundError:
+        print(f"ERROR: No se encontró el archivo {file}")
+        return None
+    except Exception as e:
+        print(f"ERROR al leer el CSV: {e}")
+        return None
 
 def get_pass():
     password=getpass.getpass(prompt='Enter password: ')
@@ -20,38 +49,62 @@ def connect_gvm():
     return connection
 
 def ready_target(connection,user,password,df):
+    if df is None or len(df) == 0:
+        print("ERROR: No hay datos para procesar")
+        return
+    
     rangos_duplicados = {}
     # using the with statement to automatically connect and disconnect to gvmd
-    with Gmp(connection=connection) as gmp:
-        # get the response message returned as a utf-8 encoded string
-        response = gmp.get_version()
-        root=ET.fromstring(response)
-        status = root.get('status')
-        version = root.find('version').text
-        print(f'Status: {status}')
-        print(f'Version: {version}')
-        gmp.authenticate(user,password)
-        for index, row in df.iterrows():
-            titulo = row['Titulo']
-            rango = row['Rango']
-            desc = row['Desc']
-            if titulo in rangos_duplicados:
-                rangos_duplicados[titulo]['rangos'].append(rango)
-            else:
-                rangos_duplicados[titulo] = {'rangos': [rango], 'desc': desc}
-        with open('log.txt','w+') as log_file:
-            for titulo, datos in rangos_duplicados.items():
-                desc = datos['desc']
-                if (len(datos['rangos']) > 9):
-                    j=0
-                    for i in range(0,len(datos['rangos']),9 ):
-                        rangos=datos['rangos'][i:i+9]
-                        titulocontador = f'{titulo}_{j}'
-                        create_target(titulocontador,rangos,desc,gmp,log_file)
-                        j+=1
-                else:
-                    rangos=datos['rangos']
-                    create_target(titulo,rangos,desc,gmp,log_file)
+    try:
+        with Gmp(connection=connection) as gmp:
+            # get the response message returned as a utf-8 encoded string
+            response = gmp.get_version()
+            root=ET.fromstring(response)
+            status = root.get('status')
+            version = root.find('version').text
+            print(f'Status: {status}')
+            print(f'Version: {version}')
+            gmp.authenticate(user,password)
+            print(f"Procesando {len(df)} filas del CSV...")
+            for index, row in df.iterrows():
+                try:
+                    titulo = row['Titulo']
+                    rango = row['Rango']
+                    desc = row['Desc']
+                    # Verificar que los valores no sean NaN o vacíos
+                    if pd.isna(titulo) or pd.isna(rango) or pd.isna(desc):
+                        print(f"ADVERTENCIA: Fila {index} tiene valores vacíos, saltando...")
+                        continue
+                    if titulo in rangos_duplicados:
+                        rangos_duplicados[titulo]['rangos'].append(rango)
+                    else:
+                        rangos_duplicados[titulo] = {'rangos': [rango], 'desc': desc}
+                except KeyError as e:
+                    print(f"ERROR: Fila {index} no tiene la columna requerida: {e}")
+                    continue
+                except Exception as e:
+                    print(f"ERROR procesando fila {index}: {e}")
+                    continue
+            
+            print(f"Total de targets a crear: {len(rangos_duplicados)}")
+            with open('log.txt','w+') as log_file:
+                for titulo, datos in rangos_duplicados.items():
+                    desc = datos['desc']
+                    if (len(datos['rangos']) > 9):
+                        j=0
+                        for i in range(0,len(datos['rangos']),9 ):
+                            rangos=datos['rangos'][i:i+9]
+                            titulocontador = f'{titulo}_{j}'
+                            create_target(titulocontador,rangos,desc,gmp,log_file)
+                            j+=1
+                    else:
+                        rangos=datos['rangos']
+                        create_target(titulo,rangos,desc,gmp,log_file)
+            print("Proceso completado. Revisa log.txt para detalles.")
+    except Exception as e:
+        print(f"ERROR crítico en ready_target: {e}")
+        import traceback
+        traceback.print_exc()
                     
 def create_target(titulo, rangos, desc,gmp,log_file):
     print(f'[TARGET]Título: {titulo}, Rangos: {rangos}, Descripción: {desc}')
@@ -72,13 +125,21 @@ def create_task(name,id,desc,gmp,log_file):
         "max_checks": "2",
         "max_hosts": "5"
     }
-    scan_order = 'random'
+    # Usar el enum HostsOrdering si está disponible, sino None (usará valor por defecto)
+    if HostsOrdering is not None:
+        scan_order = HostsOrdering.RANDOM
+    else:
+        scan_order = None
     print(f'[TASK]Título: {name}, Descripción: {desc}')
     # config id for full and fast daba56c8-73ec-11df-a475-002264764cea
     configid = 'daba56c8-73ec-11df-a475-002264764cea'
     # scanner id for openvas default 08b69003-5fc2-4037-a479-93b440211c73
     scannerid = '08b69003-5fc2-4037-a479-93b440211c73'
-    responsetask=gmp.create_task(name=name,config_id=configid,target_id=id,scanner_id=scannerid,comment=desc, hosts_ordering=scan_order, preferences=task_preferences)
+    # Si scan_order es None, no pasar el parámetro hosts_ordering
+    if scan_order is not None:
+        responsetask=gmp.create_task(name=name,config_id=configid,target_id=id,scanner_id=scannerid,comment=desc, hosts_ordering=scan_order, preferences=task_preferences)
+    else:
+        responsetask=gmp.create_task(name=name,config_id=configid,target_id=id,scanner_id=scannerid,comment=desc, preferences=task_preferences)
     create_xml= ET.fromstring(responsetask)
     status_task = create_xml.get('status')
     status_task_text = create_xml.get('status_text')
@@ -92,6 +153,17 @@ if __name__ == '__main__':
     username = 'admin'
     password = get_pass()
     file= "openvas.csv"
+    print(f"Leyendo archivo: {file}")
     df = load_csv(file)
-    connection= connect_gvm()
-    ready_target(connection,username,password,df)
+    if df is None:
+        print("No se pudo cargar el CSV. Abortando.")
+        exit(1)
+    print("Conectando a GVM...")
+    try:
+        connection= connect_gvm()
+        ready_target(connection,username,password,df)
+    except Exception as e:
+        print(f"ERROR al conectar o procesar: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
