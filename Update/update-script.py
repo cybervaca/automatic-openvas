@@ -2,6 +2,8 @@ import requests
 import json
 import subprocess
 import smtplib
+import os
+import shutil
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -82,6 +84,70 @@ def leer_configuracion(fichero):
         print(f"Ocurrió un error: {e}")
         return 0
 
+def descargar_archivo(url, destino):
+    """Descarga un archivo desde una URL y lo guarda en el destino especificado"""
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            # Crear directorio si no existe
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            with open(destino, 'wb') as f:
+                f.write(response.content)
+            print(f"Archivo descargado: {destino}")
+            # Hacer el archivo ejecutable si es un script Python
+            if destino.endswith('.py'):
+                os.chmod(destino, 0o755)
+            return True
+        else:
+            print(f"Error al descargar: código {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"Error al descargar archivo: {e}")
+        return False
+
+def ejecutar_export_target():
+    """Ejecuta export-target.py y guarda el resultado en openvas.csv.export"""
+    try:
+        script_path = '/home/redteam/gvm/Targets_Tasks/export-target.py'
+        output_path = '/home/redteam/gvm/Targets_Tasks/openvas.csv.export'
+        config_path = '/home/redteam/gvm/Config/config.json'
+        
+        # Ejecutar export-target.py
+        resultado = subprocess.run(
+            ['python3', script_path, '-c', config_path, '-o', output_path],
+            cwd='/home/redteam/gvm/Targets_Tasks/',
+            capture_output=True,
+            text=True
+        )
+        
+        if resultado.returncode == 0:
+            print(f"Export completado: {output_path}")
+            return True
+        else:
+            print(f"Error al ejecutar export-target.py: {resultado.stderr}")
+            return False
+    except Exception as e:
+        print(f"Error al ejecutar export-target: {e}")
+        return False
+
+def git_pull_forzado(repo_path):
+    """Hace un git pull forzado, descartando cambios locales"""
+    try:
+        # Primero hacer reset hard para descartar cambios locales
+        subprocess.run(['git', 'reset', '--hard', 'HEAD'], cwd=repo_path, check=True)
+        # Luego hacer fetch
+        subprocess.run(['git', 'fetch', 'origin'], cwd=repo_path, check=True)
+        # Finalmente hacer reset hard al origin/main para forzar la actualización
+        subprocess.run(['git', 'reset', '--hard', 'origin/main'], cwd=repo_path, check=True)
+        print("Git pull forzado completado")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error en git pull forzado: {e}")
+        return False
+    except Exception as e:
+        print(f"Error inesperado en git pull: {e}")
+        return False
+
 url_github = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/main/Config/config_example.json"
 version_github = get_version_github(url_github)
 configuracion = leer_configuracion('/home/redteam/gvm/Config/config_example.json')
@@ -94,6 +160,40 @@ else:
     else:
         print("Diferente version")
         config = leer_configuracion('/home/redteam/gvm/Config/config.json')
-        resultado = subprocess.run(["git","pull"], cwd='/home/redteam/gvm/', capture_output=True, text=True)
-        #email(version_github, config, resultado)
+        
+        # Paso 1: Descargar export-target.py desde GitHub
+        print("Paso 1: Descargando export-target.py...")
+        url_export_target = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/refs/heads/main/Targets_Tasks/export-target.py"
+        destino_export_target = "/home/redteam/gvm/Targets_Tasks/export-target.py"
+        if not descargar_archivo(url_export_target, destino_export_target):
+            print("Error: No se pudo descargar export-target.py")
+            exit(1)
+        
+        # Paso 2: Ejecutar export-target.py y guardar en openvas.csv.export
+        print("Paso 2: Ejecutando export-target.py...")
+        if not ejecutar_export_target():
+            print("Error: No se pudo ejecutar export-target.py")
+            exit(1)
+        
+        # Paso 3: Hacer git pull forzado
+        print("Paso 3: Haciendo git pull forzado...")
+        if not git_pull_forzado('/home/redteam/gvm/'):
+            print("Error: No se pudo hacer git pull forzado")
+            exit(1)
+        
+        # Paso 4: Copiar el backup a openvas.csv
+        print("Paso 4: Restaurando openvas.csv desde backup...")
+        backup_path = '/home/redteam/gvm/Targets_Tasks/openvas.csv.export'
+        destino_csv = '/home/redteam/gvm/Targets_Tasks/openvas.csv'
+        try:
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, destino_csv)
+                print(f"Backup restaurado: {destino_csv}")
+            else:
+                print(f"Advertencia: No se encontró el archivo de backup {backup_path}")
+        except Exception as e:
+            print(f"Error al restaurar backup: {e}")
+        
+        print("Actualización completada exitosamente")
+        #email(version_github, config, "Actualización completada exitosamente")
     
