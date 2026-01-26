@@ -22,7 +22,7 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.h
   - Limpieza de reportes antiguos (configurable por días de retención)
   - Limpieza de archivos temporales y logs antiguos
   - Verificación de espacio en disco con alertas
-  - Optimización de base de datos PostgreSQL (VACUUM, REINDEX)
+  - Optimización de base de datos PostgreSQL (VACUUM FULL, ANALYZE, REINDEX)
   - Verificación de certificados SSL/TLS
   - Generación de reportes detallados en formato JSON y texto
   - Envío de notificaciones por email con resumen del mantenimiento
