@@ -14,3 +14,18 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Changed
 - **2026-01-26**: Mejorado `update-script.py` para manejar conflictos en git pull. Ahora descarga la última versión de `export-target.py`, ejecuta un backup del CSV antes de actualizar, hace un git pull forzado y restaura el CSV desde el backup. Esto evita problemas de conflictos locales durante las actualizaciones.
 - **2026-01-26**: Mejorado `update-script.py` para verificar cambios remotos y ejecutar actualización incluso cuando la versión es la misma. Ahora detecta automáticamente si hay commits remotos disponibles y ejecuta el proceso de actualización forzada para mantener el repositorio sincronizado.
+
+### Added
+- **2026-01-26**: Agregado script completo de mantenimiento `Maintenance/maintenance.py` que automatiza todas las tareas de mantenimiento de OpenVAS:
+  - Verificación de servicios del sistema (gvmd, ospd-openvas, gsad, notus-scanner, postgresql, redis, mosquitto)
+  - Actualización de feeds de vulnerabilidades (NVT, GVMD_DATA, SCAP, CERT)
+  - Limpieza de reportes antiguos (configurable por días de retención)
+  - Limpieza de archivos temporales y logs antiguos
+  - Verificación de espacio en disco con alertas
+  - Optimización de base de datos PostgreSQL (VACUUM, REINDEX)
+  - Verificación de certificados SSL/TLS
+  - Generación de reportes detallados en formato JSON y texto
+  - Envío de notificaciones por email con resumen del mantenimiento
+  - Soporte para modo `--dry-run`, `--verbose` y `--no-email`
+  - Wrapper bash `Cron/maintenance.sh` para ejecución desde cron
+  - Configuración de mantenimiento agregada a `config_example.json`
