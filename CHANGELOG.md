@@ -13,3 +13,4 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ### Changed
 - **2026-01-26**: Mejorado `update-script.py` para manejar conflictos en git pull. Ahora descarga la última versión de `export-target.py`, ejecuta un backup del CSV antes de actualizar, hace un git pull forzado y restaura el CSV desde el backup. Esto evita problemas de conflictos locales durante las actualizaciones.
+- **2026-01-26**: Mejorado `update-script.py` para verificar cambios remotos y ejecutar actualización incluso cuando la versión es la misma. Ahora detecta automáticamente si hay commits remotos disponibles y ejecuta el proceso de actualización forzada para mantener el repositorio sincronizado.

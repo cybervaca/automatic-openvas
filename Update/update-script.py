@@ -148,52 +148,89 @@ def git_pull_forzado(repo_path):
         print(f"Error inesperado en git pull: {e}")
         return False
 
+def verificar_cambios_remotos(repo_path):
+    """Verifica si hay cambios remotos disponibles"""
+    try:
+        # Hacer fetch para obtener información de cambios remotos
+        subprocess.run(['git', 'fetch', 'origin'], cwd=repo_path, check=True, 
+                      capture_output=True, text=True)
+        # Comparar HEAD local con origin/main
+        resultado = subprocess.run(
+            ['git', 'rev-list', '--count', 'HEAD..origin/main'],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if resultado.returncode == 0:
+            commits_ahead = int(resultado.stdout.strip())
+            return commits_ahead > 0
+        return False
+    except Exception as e:
+        print(f"Error al verificar cambios remotos: {e}")
+        return False
+
+def proceso_actualizacion():
+    """Ejecuta el proceso completo de actualización"""
+    config = leer_configuracion('/home/redteam/gvm/Config/config.json')
+    
+    # Paso 1: Descargar export-target.py desde GitHub
+    print("Paso 1: Descargando export-target.py...")
+    url_export_target = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/refs/heads/main/Targets_Tasks/export-target.py"
+    destino_export_target = "/home/redteam/gvm/Targets_Tasks/export-target.py"
+    if not descargar_archivo(url_export_target, destino_export_target):
+        print("Error: No se pudo descargar export-target.py")
+        return False
+    
+    # Paso 2: Ejecutar export-target.py y guardar en openvas.csv.export
+    print("Paso 2: Ejecutando export-target.py...")
+    if not ejecutar_export_target():
+        print("Error: No se pudo ejecutar export-target.py")
+        return False
+    
+    # Paso 3: Hacer git pull forzado
+    print("Paso 3: Haciendo git pull forzado...")
+    if not git_pull_forzado('/home/redteam/gvm/'):
+        print("Error: No se pudo hacer git pull forzado")
+        return False
+    
+    # Paso 4: Copiar el backup a openvas.csv
+    print("Paso 4: Restaurando openvas.csv desde backup...")
+    backup_path = '/home/redteam/gvm/Targets_Tasks/openvas.csv.export'
+    destino_csv = '/home/redteam/gvm/Targets_Tasks/openvas.csv'
+    try:
+        if os.path.exists(backup_path):
+            shutil.copy2(backup_path, destino_csv)
+            print(f"Backup restaurado: {destino_csv}")
+        else:
+            print(f"Advertencia: No se encontró el archivo de backup {backup_path}")
+    except Exception as e:
+        print(f"Error al restaurar backup: {e}")
+    
+    print("Actualización completada exitosamente")
+    return True
+
 url_github = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/main/Config/config_example.json"
 version_github = get_version_github(url_github)
 configuracion = leer_configuracion('/home/redteam/gvm/Config/config_example.json')
 version_local = configuracion.get('version')
+
+# Verificar si hay cambios remotos disponibles
+hay_cambios_remotos = verificar_cambios_remotos('/home/redteam/gvm/')
+
 if(version_github == 0 or version_local == 0):
     print("No se puede comprobar la version")
+    # Si hay cambios remotos, ejecutar actualización de todas formas
+    if hay_cambios_remotos:
+        print("Se detectaron cambios remotos, ejecutando actualización...")
+        proceso_actualizacion()
 else:
     if(version_github==version_local):
         print("Misma version")
+        # Si hay cambios remotos aunque la versión sea la misma, ejecutar actualización
+        if hay_cambios_remotos:
+            print("Se detectaron cambios remotos, ejecutando actualización...")
+            proceso_actualizacion()
     else:
         print("Diferente version")
-        config = leer_configuracion('/home/redteam/gvm/Config/config.json')
-        
-        # Paso 1: Descargar export-target.py desde GitHub
-        print("Paso 1: Descargando export-target.py...")
-        url_export_target = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/refs/heads/main/Targets_Tasks/export-target.py"
-        destino_export_target = "/home/redteam/gvm/Targets_Tasks/export-target.py"
-        if not descargar_archivo(url_export_target, destino_export_target):
-            print("Error: No se pudo descargar export-target.py")
-            exit(1)
-        
-        # Paso 2: Ejecutar export-target.py y guardar en openvas.csv.export
-        print("Paso 2: Ejecutando export-target.py...")
-        if not ejecutar_export_target():
-            print("Error: No se pudo ejecutar export-target.py")
-            exit(1)
-        
-        # Paso 3: Hacer git pull forzado
-        print("Paso 3: Haciendo git pull forzado...")
-        if not git_pull_forzado('/home/redteam/gvm/'):
-            print("Error: No se pudo hacer git pull forzado")
-            exit(1)
-        
-        # Paso 4: Copiar el backup a openvas.csv
-        print("Paso 4: Restaurando openvas.csv desde backup...")
-        backup_path = '/home/redteam/gvm/Targets_Tasks/openvas.csv.export'
-        destino_csv = '/home/redteam/gvm/Targets_Tasks/openvas.csv'
-        try:
-            if os.path.exists(backup_path):
-                shutil.copy2(backup_path, destino_csv)
-                print(f"Backup restaurado: {destino_csv}")
-            else:
-                print(f"Advertencia: No se encontró el archivo de backup {backup_path}")
-        except Exception as e:
-            print(f"Error al restaurar backup: {e}")
-        
-        print("Actualización completada exitosamente")
-        #email(version_github, config, "Actualización completada exitosamente")
+        proceso_actualizacion()
     
