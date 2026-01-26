@@ -4,6 +4,7 @@ import subprocess
 import smtplib
 import os
 import shutil
+import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -153,7 +154,7 @@ def verificar_cambios_remotos(repo_path):
     try:
         # Hacer fetch para obtener información de cambios remotos
         subprocess.run(['git', 'fetch', 'origin'], cwd=repo_path, check=True, 
-                      capture_output=True, text=True)
+                      capture_output=True, text=True, stderr=subprocess.DEVNULL)
         # Comparar HEAD local con origin/main
         resultado = subprocess.run(
             ['git', 'rev-list', '--count', 'HEAD..origin/main'],
@@ -161,13 +162,19 @@ def verificar_cambios_remotos(repo_path):
             capture_output=True,
             text=True
         )
-        if resultado.returncode == 0:
+        if resultado.returncode == 0 and resultado.stdout.strip():
             commits_ahead = int(resultado.stdout.strip())
-            return commits_ahead > 0
+            if commits_ahead > 0:
+                print(f"Se detectaron {commits_ahead} commit(s) remoto(s) disponible(s)")
+                return True
         return False
+    except subprocess.CalledProcessError:
+        # Si falla, asumir que hay cambios para ser seguros
+        return True
     except Exception as e:
         print(f"Error al verificar cambios remotos: {e}")
-        return False
+        # En caso de error, asumir que hay cambios para ser seguros
+        return True
 
 def proceso_actualizacion():
     """Ejecuta el proceso completo de actualización"""
@@ -209,28 +216,43 @@ def proceso_actualizacion():
     print("Actualización completada exitosamente")
     return True
 
-url_github = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/main/Config/config_example.json"
-version_github = get_version_github(url_github)
-configuracion = leer_configuracion('/home/redteam/gvm/Config/config_example.json')
-version_local = configuracion.get('version')
-
-# Verificar si hay cambios remotos disponibles
-hay_cambios_remotos = verificar_cambios_remotos('/home/redteam/gvm/')
-
-if(version_github == 0 or version_local == 0):
-    print("No se puede comprobar la version")
-    # Si hay cambios remotos, ejecutar actualización de todas formas
-    if hay_cambios_remotos:
-        print("Se detectaron cambios remotos, ejecutando actualización...")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Script de actualización automática de OpenVAS"
+    )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Forzar actualización incluso si la versión es la misma'
+    )
+    args = parser.parse_args()
+    
+    url_github = "https://raw.githubusercontent.com/cybervaca/automatic-openvas/main/Config/config_example.json"
+    version_github = get_version_github(url_github)
+    configuracion = leer_configuracion('/home/redteam/gvm/Config/config_example.json')
+    version_local = configuracion.get('version')
+    
+    # Verificar si hay cambios remotos disponibles
+    hay_cambios_remotos = verificar_cambios_remotos('/home/redteam/gvm/')
+    
+    # Si se fuerza la actualización, ejecutarla directamente
+    if args.force:
+        print("Modo forzado: ejecutando actualización...")
         proceso_actualizacion()
-else:
-    if(version_github==version_local):
-        print("Misma version")
-        # Si hay cambios remotos aunque la versión sea la misma, ejecutar actualización
+    elif(version_github == 0 or version_local == 0):
+        print("No se puede comprobar la version")
+        # Si hay cambios remotos, ejecutar actualización de todas formas
         if hay_cambios_remotos:
             print("Se detectaron cambios remotos, ejecutando actualización...")
             proceso_actualizacion()
     else:
-        print("Diferente version")
-        proceso_actualizacion()
+        if(version_github==version_local):
+            print("Misma version")
+            # Si hay cambios remotos aunque la versión sea la misma, ejecutar actualización
+            if hay_cambios_remotos:
+                print("Se detectaron cambios remotos, ejecutando actualización...")
+                proceso_actualizacion()
+        else:
+            print("Diferente version")
+            proceso_actualizacion()
     
