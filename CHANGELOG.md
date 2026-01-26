@@ -29,3 +29,6 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.h
   - Soporte para modo `--dry-run`, `--verbose` y `--no-email`
   - Wrapper bash `Cron/maintenance.sh` para ejecución desde cron
   - Configuración de mantenimiento agregada a `config_example.json`
+
+### Changed
+- **2026-01-26**: Mejorada optimización de base de datos en `maintenance.py` para usar `VACUUM FULL` en lugar de `VACUUM` normal, y agregado `ANALYZE` para actualizar estadísticas del optimizador. Esto recupera más espacio en disco y mejora el rendimiento de las consultas, aunque requiere lock exclusivo durante la ejecución.

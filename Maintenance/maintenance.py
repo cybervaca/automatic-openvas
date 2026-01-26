@@ -406,7 +406,7 @@ def optimizar_base_datos(config, report, dry_run=False):
     print("\n[6/7] Optimizando base de datos PostgreSQL...")
     
     if dry_run:
-        print("[DRY-RUN] Ejecutaría VACUUM y REINDEX en base de datos gvmd")
+        print("[DRY-RUN] Ejecutaría VACUUM FULL, ANALYZE y REINDEX en base de datos gvmd")
         report.report['database'] = {'status': 'simulated'}
         return
     
@@ -421,18 +421,31 @@ def optimizar_base_datos(config, report, dry_run=False):
         
         size_before = result_before.stdout.strip() if result_before.returncode == 0 else "N/A"
         
-        # Ejecutar VACUUM
+        # Ejecutar VACUUM FULL (bloquea la BD pero recupera más espacio)
         result_vacuum = subprocess.run(
-            ['sudo', '-u', 'postgres', 'psql', '-d', 'gvmd', '-c', 'VACUUM;'],
+            ['sudo', '-u', 'postgres', 'psql', '-d', 'gvmd', '-c', 'VACUUM FULL;'],
             capture_output=True,
             text=True,
             timeout=3600
         )
         
         if result_vacuum.returncode == 0:
-            print("  ✓ VACUUM completado")
+            print("  ✓ VACUUM FULL completado")
         else:
-            report.add_warning(f"VACUUM completado con advertencias: {result_vacuum.stderr[:200]}")
+            report.add_warning(f"VACUUM FULL completado con advertencias: {result_vacuum.stderr[:200]}")
+        
+        # Ejecutar ANALYZE para actualizar estadísticas del optimizador
+        result_analyze = subprocess.run(
+            ['sudo', '-u', 'postgres', 'psql', '-d', 'gvmd', '-c', 'ANALYZE;'],
+            capture_output=True,
+            text=True,
+            timeout=1800  # 30 minutos máximo para ANALYZE
+        )
+        
+        if result_analyze.returncode == 0:
+            print("  ✓ ANALYZE completado")
+        else:
+            report.add_warning(f"ANALYZE completado con advertencias: {result_analyze.stderr[:200]}")
         
         # Ejecutar REINDEX
         result_reindex = subprocess.run(
