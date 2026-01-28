@@ -48,6 +48,49 @@ def connect_gvm():
     connection = UnixSocketConnection(path=path)
     return connection
 
+def get_full_and_fast_config_id(gmp):
+    """
+    Obtiene dinámicamente el ID de la configuración 'Full and Fast'.
+    
+    Args:
+        gmp: Objeto GMP autenticado
+    
+    Returns:
+        str: ID de la configuración 'Full and Fast' o None si no se encuentra
+    """
+    try:
+        respuesta = gmp.get_scan_configs()
+        root = ET.fromstring(respuesta)
+        scan_configs = root.findall('.//config')
+        
+        for config in scan_configs:
+            name_elem = config.find('name')
+            if name_elem is not None and name_elem.text:
+                config_name = name_elem.text.strip()
+                # Buscar "Full and Fast" (puede variar el formato)
+                if 'full' in config_name.lower() and 'fast' in config_name.lower():
+                    config_id = config.get('id')
+                    print(f"Configuración encontrada: '{config_name}' (ID: {config_id})")
+                    return config_id
+        
+        # Si no se encuentra, buscar variaciones comunes
+        for config in scan_configs:
+            name_elem = config.find('name')
+            if name_elem is not None and name_elem.text:
+                config_name = name_elem.text.strip().lower()
+                if 'full' in config_name or 'fast' in config_name:
+                    config_id = config.get('id')
+                    print(f"Configuración alternativa encontrada: '{name_elem.text}' (ID: {config_id})")
+                    return config_id
+        
+        print("ERROR: No se encontró la configuración 'Full and Fast'")
+        return None
+    except Exception as e:
+        print(f"ERROR al obtener configuración 'Full and Fast': {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def ready_target(connection,user,password,df):
     if df is None or len(df) == 0:
         print("ERROR: No hay datos para procesar")
@@ -87,6 +130,14 @@ def ready_target(connection,user,password,df):
                     continue
             
             print(f"Total de targets a crear: {len(rangos_duplicados)}")
+            
+            # Obtener el ID de la configuración 'Full and Fast' dinámicamente
+            print("Obteniendo ID de configuración 'Full and Fast'...")
+            config_id = get_full_and_fast_config_id(gmp)
+            if config_id is None:
+                print("ERROR: No se pudo obtener el ID de configuración. Abortando.")
+                return
+            
             with open('log.txt','w+') as log_file:
                 for titulo, datos in rangos_duplicados.items():
                     desc = datos['desc']
@@ -95,18 +146,18 @@ def ready_target(connection,user,password,df):
                         for i in range(0,len(datos['rangos']),9 ):
                             rangos=datos['rangos'][i:i+9]
                             titulocontador = f'{titulo}_{j}'
-                            create_target(titulocontador,rangos,desc,gmp,log_file)
+                            create_target(titulocontador,rangos,desc,gmp,log_file,config_id)
                             j+=1
                     else:
                         rangos=datos['rangos']
-                        create_target(titulo,rangos,desc,gmp,log_file)
+                        create_target(titulo,rangos,desc,gmp,log_file,config_id)
             print("Proceso completado. Revisa log.txt para detalles.")
     except Exception as e:
         print(f"ERROR crítico en ready_target: {e}")
         import traceback
         traceback.print_exc()
                     
-def create_target(titulo, rangos, desc,gmp,log_file):
+def create_target(titulo, rangos, desc,gmp,log_file,config_id):
     print(f'[TARGET]Título: {titulo}, Rangos: {rangos}, Descripción: {desc}')
     response_create=gmp.create_target(name=titulo,hosts=rangos,comment=desc,port_list_id='730ef368-57e2-11e1-a90f-406186ea4fc5')
     create_xml= ET.fromstring(response_create)
@@ -118,9 +169,9 @@ def create_target(titulo, rangos, desc,gmp,log_file):
     print(f'ID: {id_target}')
     log_file.write(f'[TARGET]Título: {titulo};Rangos: {rangos};Status: {status_target}; Status Text: {status_target_text};ID: {id_target}\n')
     if (status_target == '201'):
-        create_task(titulo,id_target,desc,gmp,log_file)
+        create_task(titulo,id_target,desc,gmp,log_file,config_id)
 
-def create_task(name,id,desc,gmp,log_file):
+def create_task(name,id,desc,gmp,log_file,config_id):
     task_preferences = {
         "max_checks": "2",
         "max_hosts": "5"
@@ -131,8 +182,8 @@ def create_task(name,id,desc,gmp,log_file):
     else:
         scan_order = None
     print(f'[TASK]Título: {name}, Descripción: {desc}')
-    # config id for full and fast daba56c8-73ec-11df-a475-002264764cea
-    configid = 'daba56c8-73ec-11df-a475-002264764cea'
+    # Usar el config_id obtenido dinámicamente (Full and Fast)
+    configid = config_id
     # scanner id for openvas default 08b69003-5fc2-4037-a479-93b440211c73
     scannerid = '08b69003-5fc2-4037-a479-93b440211c73'
     # Si scan_order es None, no pasar el parámetro hosts_ordering
