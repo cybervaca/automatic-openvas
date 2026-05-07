@@ -3,14 +3,33 @@ import argparse
 import json
 import csv
 import xml.etree.ElementTree as ET
+import subprocess
+import sys
+import os
 
 from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
 
-def export_targets_csv(config_path: str, csv_path: str, page_size: int = 1000) -> None:
+def get_excluded_hosts(target) -> str:
+    """
+    Extrae exclusiones del XML de target en un formato compatible con set-TT.py.
+    """
+    exclusions = []
+    seen = set()
+    for tag in ["exclude", "exclude_hosts", "hosts_excluded"]:
+        exclusions_elem = target.find(f".//{tag}")
+        if exclusions_elem is not None and exclusions_elem.text:
+            for item in exclusions_elem.text.split(','):
+                excluded_host = item.strip()
+                if excluded_host and excluded_host not in seen:
+                    exclusions.append(excluded_host)
+                    seen.add(excluded_host)
+    return ",".join(exclusions)
+
+def export_targets_csv(config_path: str, csv_path: str, page_size: int = 1000) -> int:
     """
     Exporta todos los targets de OpenVAS en formato CSV, evitando el límite de 1 000 filas
-    mediante paginación. El CSV tendrá columnas Titulo;Rango;Desc.
+    mediante paginación. El CSV tendrá columnas Titulo;Rango;Desc;Exclusiones.
     """
     # Cargar credenciales
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -44,11 +63,12 @@ def export_targets_csv(config_path: str, csv_path: str, page_size: int = 1000) -
     # Escribir el CSV
     with open(csv_path, 'w', newline='', encoding='utf-8') as f_out:
         writer = csv.writer(f_out, delimiter=';')
-        writer.writerow(["Titulo", "Rango", "Desc"])
+        writer.writerow(["Titulo", "Rango", "Desc", "Exclusiones"])
         for target in all_targets:
             titulo = (target.findtext("name") or "").strip()
             rangos_str = (target.findtext("hosts") or "").strip()
             desc = (target.findtext("comment") or "").strip()
+            exclusiones = get_excluded_hosts(target)
             titulo = " ".join(titulo.split())
             desc = " ".join(desc.split())
             
@@ -56,19 +76,63 @@ def export_targets_csv(config_path: str, csv_path: str, page_size: int = 1000) -
             if rangos_str:
                 rangos = [r.strip() for r in rangos_str.split(',') if r.strip()]
                 for rango in rangos:
-                    writer.writerow([titulo, rango, desc])
+                    writer.writerow([titulo, rango, desc, exclusiones])
             else:
                 # Si no hay rangos, escribir una fila vacía
-                writer.writerow([titulo, "", desc])
+                writer.writerow([titulo, "", desc, exclusiones])
+
+    return len(all_targets)
+
+def upload_to_sharepoint(csv_path: str, config_path: str) -> bool:
+    """
+    Sube el CSV exportado a SharePoint usando subida_share.py.
+    """
+    # Cargar config para obtener país
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    pais = config.get("pais", "UNKNOWN")
+    
+    # Verificar que existe el archivo a subir
+    if not os.path.isfile(csv_path):
+        print(f"[ERROR] No se encuentra el archivo: {csv_path}", file=sys.stderr)
+        return False
+    
+    # Ruta al script de subida
+    subida_script = "/home/redteam/gvm/Reports/subida_share.py"
+    if not os.path.isfile(subida_script):
+        print(f"[ERROR] No se encuentra subida_share.py: {subida_script}", file=sys.stderr)
+        return False
+    
+    # IMPORTANTE: subida_share.py lee /home/redteam/gvm/Config/config.json automáticamente
+    # Si estás usando un config diferente (-c), la subida puede fallar
+    if config_path != "/home/redteam/gvm/Config/config.json":
+        print(f"[WARNING] Usando config no estándar: {config_path}")
+        print("[WARNING] subida_share.py leerá /home/redteam/gvm/Config/config.json para credenciales SharePoint")
+    
+    # Ejecutar subida_share.py
+    print(f"[INFO] Subiendo {csv_path} a SharePoint...")
+    result = subprocess.run([
+        "python3", subida_script,
+        "-f", csv_path,
+        "-p", pais,
+        "-a", "Targets_Export"
+    ], capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        print(result.stdout)
+        return True
+    else:
+        print(f"[ERROR] Fallo al subir a SharePoint: {result.stderr}", file=sys.stderr)
+        return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Exporta todos los targets de OpenVAS a CSV (Titulo;Rango;Desc)"
+        description="Exporta todos los targets de OpenVAS a CSV y opcionalmente los sube a SharePoint"
     )
     parser.add_argument(
         "-c", "--config",
-        default="../Config/config.json",
-        help="Ruta al fichero config.json (por defecto: Config/config.json)"
+        default="/home/redteam/gvm/Config/config.json",
+        help="Ruta al fichero config.json (por defecto: /home/redteam/gvm/Config/config.json)"
     )
     parser.add_argument(
         "-o", "--output",
@@ -79,8 +143,30 @@ if __name__ == "__main__":
         "--page-size",
         type=int,
         default=1000,
-        help="Número de elementos a solicitar en cada página (no debe superar el límite Max Rows Per Page)"
+        help="Número de elementos a solicitar en cada página (no debe superar el límite Max Rows Per Page)"
+    )
+    parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="NO subir el CSV a SharePoint (por defecto siempre sube)"
     )
     args = parser.parse_args()
-    export_targets_csv(args.config, args.output, args.page_size)
+    
+    # Exportar targets
+    print("[INFO] Exportando targets desde OpenVAS...")
+    num_targets = export_targets_csv(args.config, args.output, args.page_size)
+    print(f"[OK] Exportados {num_targets} targets a {args.output}")
+    
+    # Subir a SharePoint (siempre, excepto si se usa --no-upload)
+    if not args.no_upload:
+        success = upload_to_sharepoint(args.output, args.config)
+        if success:
+            print("[OK] Exportación y subida completadas exitosamente")
+            sys.exit(0)
+        else:
+            print("[ERROR] Exportación OK pero fallo la subida a SharePoint", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("[INFO] Subida a SharePoint omitida (--no-upload)")
+        sys.exit(0)
 

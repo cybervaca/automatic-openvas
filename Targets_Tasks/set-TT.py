@@ -1,17 +1,81 @@
 import pandas as pd
 import getpass
+import csv
+import os
+import re
+import importlib
 import xml.etree.ElementTree as ET
 from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
 # Intentar importar HostsOrdering desde diferentes ubicaciones posibles
 try:
-    from gvm.protocols.gmp.types import HostsOrdering
-except ImportError:
+    HostsOrdering = getattr(importlib.import_module('gvm.protocols.gmp.types'), 'HostsOrdering')
+except (ImportError, AttributeError):
     try:
-        from gvm.protocols.gmp import HostsOrdering
-    except ImportError:
+        HostsOrdering = getattr(importlib.import_module('gvm.protocols.gmp'), 'HostsOrdering')
+    except (ImportError, AttributeError):
         # Si no se puede importar, usar None y eliminar el parámetro
         HostsOrdering = None
+
+EXCLUSIONS_CSV_PATH = '/home/redteam/gvm/Reports/exclusion.csv'
+
+
+def normalize_exclusions(value):
+    """
+    Normaliza exclusiones separadas por coma, punto y coma o espacios.
+    Devuelve una lista sin vacíos ni duplicados, manteniendo el orden.
+    """
+    if value is None or pd.isna(value):
+        return []
+
+    exclusions = []
+    seen = set()
+    for item in re.split(r'[,;\s]+', str(value).strip()):
+        exclusion = item.strip()
+        if exclusion and exclusion not in seen:
+            exclusions.append(exclusion)
+            seen.add(exclusion)
+
+    return exclusions
+
+
+def merge_unique(existing, new_values):
+    """Une listas sin duplicados, manteniendo el orden."""
+    merged = list(existing or [])
+    seen = set(merged)
+    for value in new_values or []:
+        if value not in seen:
+            merged.append(value)
+            seen.add(value)
+    return merged
+
+
+def load_exclusions_csv(path=EXCLUSIONS_CSV_PATH):
+    """
+    Carga exclusiones históricas exportadas por Reports/get-reports-test.py.
+    Formato esperado: task_name,excluded_ips,date
+    """
+    exclusions_by_task = {}
+    if not os.path.exists(path):
+        print(f"[EXCLUSIONES] No se encontró {path}; se usará solo la columna Exclusiones si existe")
+        return exclusions_by_task
+
+    try:
+        with open(path, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                task_name = (row.get('task_name') or '').strip()
+                excluded_ips = normalize_exclusions(row.get('excluded_ips'))
+                if task_name and excluded_ips:
+                    exclusions_by_task[task_name] = merge_unique(
+                        exclusions_by_task.get(task_name, []),
+                        excluded_ips
+                    )
+        print(f"[EXCLUSIONES] Cargadas exclusiones para {len(exclusions_by_task)} tarea(s) desde {path}")
+    except Exception as e:
+        print(f"[EXCLUSIONES] ADVERTENCIA: No se pudieron cargar exclusiones desde {path}: {e}")
+
+    return exclusions_by_task
 
 
 def load_csv(file):
@@ -30,6 +94,10 @@ def load_csv(file):
             print("ERROR: No hay filas válidas después de filtrar")
             return None
         print(f"Columnas encontradas: {list(df.columns)}")
+        
+        # Resolver títulos duplicados
+        df = resolve_duplicate_titles(df)
+        
         return df
     except FileNotFoundError:
         print(f"ERROR: No se encontró el archivo {file}")
@@ -37,6 +105,46 @@ def load_csv(file):
     except Exception as e:
         print(f"ERROR al leer el CSV: {e}")
         return None
+
+
+def resolve_duplicate_titles(df):
+    """
+    Detecta títulos duplicados en el CSV y les agrega un sufijo numérico (_2, _3, etc.).
+    También actualiza la descripción para reflejar el nuevo título.
+    """
+    print("\n[PARSEO] Verificando títulos duplicados...")
+    
+    title_counts = {}
+    new_titles = []
+    new_descs = []
+    duplicates_found = 0
+    
+    for _, row in df.iterrows():
+        titulo = str(row['Titulo']).strip()
+        desc = str(row['Desc']).strip()
+        
+        if titulo in title_counts:
+            title_counts[titulo] += 1
+            new_titulo = f"{titulo}_{title_counts[titulo]}"
+            new_desc = f"{desc}_{title_counts[titulo]}"
+            new_titles.append(new_titulo)
+            new_descs.append(new_desc)
+            duplicates_found += 1
+            print(f"  [DUPLICADO] '{titulo}' -> '{new_titulo}'")
+        else:
+            title_counts[titulo] = 1
+            new_titles.append(titulo)
+            new_descs.append(desc)
+    
+    df['Titulo'] = new_titles
+    df['Desc'] = new_descs
+    
+    if duplicates_found > 0:
+        print(f"\n[PARSEO] {duplicates_found} título(s) duplicado(s) renombrado(s)")
+    else:
+        print("[PARSEO] No se encontraron títulos duplicados")
+    
+    return df
 
 def get_pass():
     password=getpass.getpass(prompt='Enter password: ')
@@ -97,6 +205,8 @@ def ready_target(connection,user,password,df):
         return
     
     rangos_duplicados = {}
+    exclusions_by_task = load_exclusions_csv()
+    has_exclusions_column = 'Exclusiones' in df.columns
     # using the with statement to automatically connect and disconnect to gvmd
     try:
         with Gmp(connection=connection) as gmp:
@@ -118,10 +228,29 @@ def ready_target(connection,user,password,df):
                     if pd.isna(titulo) or pd.isna(rango) or pd.isna(desc):
                         print(f"ADVERTENCIA: Fila {index} tiene valores vacíos, saltando...")
                         continue
+                    titulo = str(titulo).strip()
+                    rango = str(rango).strip()
+                    desc = str(desc).strip()
+
+                    csv_exclusions = []
+                    if has_exclusions_column:
+                        csv_exclusions = normalize_exclusions(row.get('Exclusiones'))
+
+                    # Prioridad: columna Exclusiones; fallback: Reports/exclusion.csv por task_name == Titulo.
+                    exclusiones = csv_exclusions or exclusions_by_task.get(titulo, [])
+
                     if titulo in rangos_duplicados:
                         rangos_duplicados[titulo]['rangos'].append(rango)
+                        rangos_duplicados[titulo]['exclusiones'] = merge_unique(
+                            rangos_duplicados[titulo].get('exclusiones', []),
+                            exclusiones
+                        )
                     else:
-                        rangos_duplicados[titulo] = {'rangos': [rango], 'desc': desc}
+                        rangos_duplicados[titulo] = {
+                            'rangos': [rango],
+                            'desc': desc,
+                            'exclusiones': exclusiones
+                        }
                 except KeyError as e:
                     print(f"ERROR: Fila {index} no tiene la columna requerida: {e}")
                     continue
@@ -141,25 +270,37 @@ def ready_target(connection,user,password,df):
             with open('log.txt','w+') as log_file:
                 for titulo, datos in rangos_duplicados.items():
                     desc = datos['desc']
+                    exclusiones = datos.get('exclusiones', [])
                     if (len(datos['rangos']) > 9):
                         j=0
                         for i in range(0,len(datos['rangos']),9 ):
                             rangos=datos['rangos'][i:i+9]
                             titulocontador = f'{titulo}_{j}'
-                            create_target(titulocontador,rangos,desc,gmp,log_file,config_id)
+                            create_target(titulocontador,rangos,desc,gmp,log_file,config_id,exclusiones)
                             j+=1
                     else:
                         rangos=datos['rangos']
-                        create_target(titulo,rangos,desc,gmp,log_file,config_id)
+                        create_target(titulo,rangos,desc,gmp,log_file,config_id,exclusiones)
             print("Proceso completado. Revisa log.txt para detalles.")
     except Exception as e:
         print(f"ERROR crítico en ready_target: {e}")
         import traceback
         traceback.print_exc()
                     
-def create_target(titulo, rangos, desc,gmp,log_file,config_id):
+def create_target(titulo, rangos, desc,gmp,log_file,config_id,exclusiones=None):
+    exclusiones = exclusiones or []
     print(f'[TARGET]Título: {titulo}, Rangos: {rangos}, Descripción: {desc}')
-    response_create=gmp.create_target(name=titulo,hosts=rangos,comment=desc,port_list_id='730ef368-57e2-11e1-a90f-406186ea4fc5')
+    if exclusiones:
+        print(f'[TARGET]Exclusiones: {exclusiones}')
+        response_create=gmp.create_target(
+            name=titulo,
+            hosts=rangos,
+            comment=desc,
+            exclude_hosts=exclusiones,
+            port_list_id='730ef368-57e2-11e1-a90f-406186ea4fc5'
+        )
+    else:
+        response_create=gmp.create_target(name=titulo,hosts=rangos,comment=desc,port_list_id='730ef368-57e2-11e1-a90f-406186ea4fc5')
     create_xml= ET.fromstring(response_create)
     status_target = create_xml.get('status')
     status_target_text = create_xml.get('status_text')
@@ -167,7 +308,7 @@ def create_target(titulo, rangos, desc,gmp,log_file,config_id):
     print(f'Status: {status_target}')
     print(f'Status Text: {status_target_text}')
     print(f'ID: {id_target}')
-    log_file.write(f'[TARGET]Título: {titulo};Rangos: {rangos};Status: {status_target}; Status Text: {status_target_text};ID: {id_target}\n')
+    log_file.write(f'[TARGET]Título: {titulo};Rangos: {rangos};Exclusiones: {exclusiones};Status: {status_target}; Status Text: {status_target_text};ID: {id_target}\n')
     if (status_target == '201'):
         create_task(titulo,id_target,desc,gmp,log_file,config_id)
 

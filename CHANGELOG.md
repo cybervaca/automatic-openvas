@@ -7,6 +7,14 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ## [Unreleased]
 
+### Added
+- **2026-05-07**: `export-target.py` ahora exporta targets en formato reimportable `Titulo;Rango;Desc;Exclusiones`, incluyendo las exclusiones configuradas en OpenVAS.
+- **2026-05-07**: `set-TT.py` ahora soporta la columna opcional `Exclusiones`, aplica `exclude_hosts` al crear targets y puede usar `/home/redteam/gvm/Reports/exclusion.csv` como fallback.
+
+### Changed
+- **2026-05-07**: Alineado el comportamiento de `export-target.py` y `set-TT.py` con el formato del repositorio Docker, manteniendo la comunicación local con OpenVAS mediante socket Unix `/run/gvmd/gvmd.sock`.
+- **2026-05-07**: `export-target.py` sube el CSV a SharePoint por defecto usando las rutas de este proyecto (`/home/redteam/gvm`) y permite omitir la subida con `--no-upload`.
+
 ### Fixed
 - **2026-01-26**: Corregido error `InvalidArgumentType` en `set-TT.py` al crear tasks. El parámetro `hosts_ordering` ahora usa el enum `HostsOrdering` en lugar de un string. Se agregó manejo de errores mejorado y validación del CSV con filtrado de filas vacías.
 - **2026-01-26**: Corregido `export-target.py` para exportar un rango IP por fila en lugar de combinar todos los rangos en una sola fila. Ahora divide los rangos IP por comas y crea una fila CSV por cada rango individual, manteniendo el mismo título y descripción.

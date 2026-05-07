@@ -73,6 +73,32 @@ Una vez rellenado, obtenemos los puertos:
 python3 get-ports.py
 ```
 
+El CSV de targets usa el formato:
+```
+Titulo;Rango;Desc;Exclusiones
+```
+
+`Exclusiones` es opcional y acepta IPs o rangos separados por coma, punto y coma o espacios. Si no existe esa columna o viene vacía, `set-TT.py` intenta usar `/home/redteam/gvm/Reports/exclusion.csv` como respaldo cuando haya exclusiones históricas para el mismo nombre de task.
+
+Para importar targets y crear sus tasks desde `openvas.csv`:
+```
+cd /home/redteam/gvm/Targets_Tasks
+python3 set-TT.py
+```
+
+Para exportar los targets actuales de OpenVAS en un CSV compatible con la importación:
+```
+cd /home/redteam/gvm/Targets_Tasks
+python3 export-target.py -c /home/redteam/gvm/Config/config.json -o openvas.csv
+```
+
+Por defecto `export-target.py` sube el CSV a SharePoint usando `Reports/subida_share.py`. Para exportar solo el archivo local:
+```
+python3 export-target.py -c /home/redteam/gvm/Config/config.json -o openvas.csv --no-upload
+```
+
+Estos scripts se conectan a OpenVAS por el socket local `/run/gvmd/gvmd.sock`.
+
 #### Script de Mantenimiento
 El proyecto incluye un script de mantenimiento completo que automatiza todas las tareas de mantenimiento de OpenVAS.
 
